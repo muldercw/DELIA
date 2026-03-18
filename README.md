@@ -1,10 +1,22 @@
 # DELIA — Dynamic Enhanced Learning Integrated Assistant
 
-> Modular AI agent framework with a unified assistant runtime. DELIA runs as a one-shot task, interactive REPL, web dashboard, or background daemon. It dynamically loads tools, skills, and connectors at runtime, routes work across models, and can keep long-running mission profiles moving forward over time. Features graph-based memory with hybrid vector+keyword search, multi-provider web search, multimodal vision, event-driven reactions, notification routing, parallel agent spawning, cron scheduling, autonomous mission continuation, a 4-slot plugin architecture, per-session tool tracking, and a mobile-responsive real-time web dashboard.
+> DELIA is a unified AI assistant runtime for real software work. It can run as a one-shot task executor, an interactive REPL, a live web dashboard, or a background automation service while sharing the same core agent loop, memory system, orchestration model, and provider routing.
+
+DELIA is built for practical engineering workflows:
+
+- interactive coding and debugging
+- tool-driven execution inside the workspace
+- long-running missions and scheduled automation
+- isolated delegated worker agents
+- reproducible evaluation runs with exported artifacts
+
+Instead of treating chat, orchestration, and evaluation as separate products, DELIA keeps them in one runtime so the same tools, memory, sessions, and safety controls apply everywhere.
 
 ## Installation
 
 ```bash
+# Optional but recommended: create and activate a virtual environment first
+
 # Core runtime
 pip install -e .
 
@@ -14,12 +26,35 @@ pip install -e ".[dev]"
 # Optional voice connector stack
 pip install -e ".[voice]"
 
+# Install Playwright browser binaries for browser_session
+python -m playwright install chromium
+
 # Recommended voice extras for the default backend choices
 pip install faster-whisper resemblyzer
 
 # Create your working config
 copy "config.example.yaml" config.yaml
 ```
+
+### Fresh setup on a new system
+
+For a clean checkout, the minimum path is:
+
+1. create and activate a Python virtual environment
+2. install DELIA with `pip install -e .`
+3. copy [config.example.yaml](config.example.yaml) to [config.yaml](config.yaml)
+4. fill in your model and secret values
+5. optionally install browser binaries and voice extras if you want those features
+
+If you want the newer Next.js dashboard shipped in [web-ui/](web-ui), build it once on that machine:
+
+```bash
+cd web-ui
+npm install
+npm run build
+```
+
+The generated `web-ui/out/` directory is build output. You do not need to copy it between systems if you can rebuild it locally.
 
 ## Quick Start
 
@@ -29,6 +64,9 @@ python -m agent
 
 # One-shot task
 python -m agent run "create a Python hello-world project"
+
+# Benchmark / eval run
+python -m agent eval evals/sample_tasks.jsonl
 
 # Interactive REPL only (without assistant automation extras)
 python -m agent chat
@@ -69,13 +107,82 @@ python -m agent decrypt-secrets -c config.yaml
 python -m agent doctor
 ```
 
+## What DELIA is best at
+
+DELIA works best when you want one system to cover both interactive and autonomous workflows:
+
+- **Interactive engineering help** — code changes, debugging, repo cleanup, architecture questions, and research.
+- **Controlled execution** — tool use, browser automation, notebooks, file changes, and workspace-bound command execution.
+- **Ongoing orchestration** — missions, recurring scheduler tasks, and isolated delegated worker agents.
+- **Regression tracking** — repeatable eval runs that export transcripts, responses, and summaries for later comparison.
+
+## Benchmarking and Evaluation
+
+DELIA includes a lightweight evaluation harness for repeatable benchmark and regression runs.
+
+Use it to compare:
+
+- model changes
+- prompt or bootstrap changes
+- tool or planner changes
+- autonomy or routing policy changes
+
+Run an evaluation suite with:
+
+```bash
+python -m agent eval evals/sample_tasks.jsonl
+python -m agent eval evals/sample_tasks.jsonl --limit 2
+python -m agent eval evals/sample_tasks.jsonl --output-dir .agent/evals
+```
+
+Supported dataset formats:
+
+- JSONL
+- JSON arrays
+- JSON objects with a top-level `cases` list
+
+Each case can define:
+
+- `id` or `case_id`
+- `task` or `input`
+- `expected_contains`
+- `forbidden_contains`
+- `expected_regex`
+- `forbidden_regex`
+- `exact_match`
+- `min_response_chars`
+- `max_response_chars`
+- `checks` for weighted scoring
+- `tags`
+- `metadata`
+
+Each run exports a timestamped artifact bundle with:
+
+- `summary.json`
+- `summary.md`
+- `results.jsonl`
+- optional comparison files against the previous run for the same dataset
+- per-case response files
+- per-case transcripts when session persistence is enabled
+
+Run summaries also include per-tag rollups so you can compare categories like `web`, `maintenance`, or `refactor` across model or prompt changes.
+
+See [EVALS.md](EVALS.md) for the full dataset format and workflow details.
+
 ## Package Structure
 
 ```
 DELIA/
-├── config.yaml              # Project configuration
-├── pyproject.toml           # Build config & dependencies
+├── config.example.yaml      # Example config template
+├── config.yaml              # Local project configuration
+├── sandbox_policy.example.yaml # Example declarative sandbox policy
+├── sandbox_policy.yaml      # Active declarative sandbox policy
+├── pyproject.toml           # Python build config & dependencies
 ├── README.md                # ← you are here
+├── EVALS.md                 # Evaluation harness format and workflow
+├── evals/                   # Sample evaluation datasets
+├── DEPLOY/                  # Local and Docker deployment helpers
+├── web-ui/                  # Optional Next.js dashboard source + build output
 │
 └── agent/                   # Main package
     ├── __init__.py          # Package root (__version__)
@@ -114,6 +221,8 @@ DELIA/
     │   ├── notifier.py      # Multi-backend notification router
     │   ├── workspace.py     # Git worktree isolation & parallel agent spawning
     │   ├── sandbox.py       # Command sandboxing & risk classification
+    │   ├── policy_engine.py # Declarative YAML policy engine
+    │   ├── profiles.py      # Environment profiles / blueprints
     │   ├── scheduler.py     # Cron-style task scheduling engine
     │   ├── missions.py      # Mission profiles, ledger, continuation engine, lanes
     │   ├── self_improve.py  # Idle self-improvement cycles
@@ -131,7 +240,8 @@ DELIA/
     │   └── user_defined/    # Auto-discovered production tools
     │
     ├── connectors/          # External communication bridges
-    │   └── base.py          # BaseConnector ABC + ConnectorRegistry
+    │   ├── base.py          # BaseConnector ABC + ConnectorRegistry
+    │   └── voice.py         # Always-on local voice connector
     │
     ├── skills/              # Dynamic skill packs
     │   ├── loader.py        # SkillLoader (discover, parse, activate)
@@ -148,7 +258,7 @@ DELIA/
     └── ui/                  # Web dashboard (stdlib http.server + SSE)
         ├── server.py        # UIHandler — chat streaming, REST API, SSE events
         └── static/
-            └── index.html   # Mobile-responsive dark-themed dashboard
+        └── index.html   # Legacy fallback dashboard when web-ui/out is absent
 ```
 
 ## Architecture
@@ -209,7 +319,7 @@ At a high level, DELIA is one runtime with several entry points:
 - `agent ui` starts the browser dashboard.
 - `agent start --daemon` runs DELIA as a background service with HTTP endpoints plus recurring automation.
 
-All of those entry points feed into the same core runtime in [agent/core/agent.py](agent/core/agent.py). That means chat, one-shot runs, the web UI, missions, and delegated workers all share the same basic reasoning loop, tool system, memory system, and provider routing.
+All of those entry points feed into the same core runtime in [agent/core/agent.py](agent/core/agent.py). That means chat, one-shot runs, the web UI, missions, delegated workers, and eval runs all share the same basic reasoning loop, tool system, memory system, and provider routing.
 
 The runtime flow is:
 
@@ -235,7 +345,7 @@ Inside a normal run, DELIA repeatedly does this:
 
 ### Unified orchestration
 
-DELIA now treats long-running automation as first-class runtime capabilities instead of keeping them limited to CLI entry points.
+DELIA treats long-running automation as first-class runtime capabilities instead of keeping them limited to CLI entry points.
 
 That means the main agent can directly use:
 
@@ -295,6 +405,10 @@ Most persistent runtime state lives under `.agent/` inside the workspace. The im
 - `.agent/todos/` or session-scoped task state — large implementation task tracking when used
 
 This layout is what makes DELIA resumable: the same workspace can keep memory, missions, delegated runs, and operator sessions connected over time.
+
+### Where evaluation artifacts live
+
+By default, `agent eval` writes benchmark runs under `.agent/evals/` in timestamped folders. That keeps regression artifacts separate from normal chat transcripts while still preserving the same session and runtime details that produced each result.
 
 ## Autonomous Missions
 
@@ -449,6 +563,16 @@ The built-in web UI (`python -m agent ui`) provides a real-time interface:
 
 Access from other devices on your LAN with `--host 0.0.0.0`.
 
+DELIA serves the Next.js static export from [web-ui/out](web-ui/out) when it exists. If that build output is missing, the server falls back to the legacy static UI in [agent/ui/static](agent/ui/static).
+
+To rebuild the newer dashboard on a fresh machine:
+
+```bash
+cd web-ui
+npm install
+npm run build
+```
+
 ## Voice Connector
 
 DELIA includes a local voice connector for always-on, wake-word-driven interaction.
@@ -549,6 +673,7 @@ See [agent/connectors/voice.py](agent/connectors/voice.py) and the `connectors.v
 | `agent stop` | Stop the daemon |
 | `agent status` | Show daemon status |
 | `agent config` | Validate and display config |
+| `agent eval <dataset>` | Run a benchmark/evaluation suite and export artifacts |
 | `agent tools [-f family]` | List registered tools |
 | `agent skills` | List discovered skills |
 | `agent ui [--host H] [-p PORT]` | Start the web dashboard |
@@ -698,10 +823,173 @@ Secrets are injected as environment variables at load time and masked in logs. V
 | **Parallel Agents** | Spawn isolated agents in git worktrees for concurrent work on different branches |
 | **Plugin Architecture** | 4-slot system (Runtime, Tracker, Workspace, Notifier) with manifest-based discovery |
 | **Web Dashboard** | Mobile-responsive, SSE-streamed chat with per-session tool tracking and message queuing |
+| **Declarative Sandbox Policy** | YAML policy engine with four enforcement domains (filesystem, network, process, inference), audit/enforce modes, and JSONL audit trail |
+| **Network Egress Control** | Per-tool, per-endpoint network access control with L7 HTTP method+path rules, access levels (full/read-only/read-write), host wildcards, and deny-by-default |
+| **Privacy-Aware Inference Routing** | Automatic routing of sensitive context to private (local) models; cloud model blocking for confidential data; per-model context type restrictions |
+| **Defence-in-Depth Sandbox** | Four-layer policy enforcement: filesystem path control, network egress, process execution constraints, and inference routing — static policies locked at startup, dynamic policies hot-reloadable |
+| **Policy Audit Trail** | Every policy deny/audit event logged to `.agent/policy_audit.jsonl` for operator review and compliance |
+| **Operator Approval for Policy Violations** | blocked network/process requests surface in REPL & approval queue for real-time operator approve/deny |
+| **Session-Scoped Policy Overrides** | Operator-approved endpoints active for current session only, never persisted to baseline — prevents policy drift |
+| **Network Activity Monitor** | Live tracking of all outbound requests with per-tool, per-host summaries; blocked request alerts in REPL (`/network`) |
+| **Runtime Model Switching** | Hot-swap the active model without restart via REPL (`/switch-model`) or router API |
+| **Dynamic Policy Application** | Apply policy overlays to a running agent (`/policy-set`) and add session network overrides (`/policy-allow`)|
+| **Environment Profiles** | bundles of policy + model config + tool restrictions for reproducible sandbox environments |
 | **Autonomy Controls** | Supervised/full modes, workspace confinement, command sandboxing, rate limiting |
 | **Encrypted Secrets** | AES-GCM / Fernet encryption for secrets at rest in config files |
 | **Self-Improvement** | Idle-time cycles that let the agent improve its own tools, skills, and memory |
+| **Built-in Evaluation Harness** | Run JSON/JSONL benchmark suites, export artifacts, and compare regressions over time |
 | **Auto-Discovered Tools** | File I/O, search, git, browser, notebooks, MCP, GitHub, vision, and more |
+
+## Sandbox Policy
+
+DELIA includes a declarative, defence-in-depth sandbox policy system.
+
+The policy engine enforces four domains:
+
+| Domain | What it controls | Reload |
+|--------|-----------------|--------|
+| **Filesystem** | Read-only vs read-write path lists; explicit denied paths | Static (locked at startup) |
+| **Network** | Per-tool, per-endpoint egress control with L7 HTTP method+path rules | Dynamic (hot-reloadable) |
+| **Process** | Blocked executables, privilege escalation, dangerous syscall patterns | Static (locked at startup) |
+| **Inference** | Privacy-aware model routing; sensitive data → local models | Dynamic (hot-reloadable) |
+
+### Quick start
+
+1. Copy the example policy file:
+
+```bash
+copy sandbox_policy.example.yaml sandbox_policy.yaml
+```
+
+2. Uncomment and configure the sections you need.
+
+3. Run DELIA — the policy engine loads automatically:
+
+```bash
+python -m agent doctor    # verify policy is detected
+python -m agent           # run with policy enforcement
+```
+
+### Policy modes
+
+- **`enforce`** (default) — violations are blocked and logged.
+- **`audit`** — violations are allowed but logged to `.agent/policy_audit.jsonl` for operator review.
+
+Audit mode is useful for gradually rolling out policies without breaking existing workflows.
+
+### Network egress control
+
+Network policies follow deny-by-default with per-tool, per-endpoint allowlists.
+
+```yaml
+network_policies:
+  github_api:
+    name: github-rest-api
+    endpoints:
+      - host: api.github.com
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: read-only
+    tools:
+      - github_*
+      - web_fetch
+```
+
+Access levels: `full`, `read-only`, `read-write`. Fine-grained rules can specify individual HTTP methods and URL paths.
+
+### Privacy-aware inference routing
+
+Models can be marked as `private` (local, data stays on-machine) or `public` (cloud). When `route_sensitive_to_private` is enabled, sensitive context is automatically routed to a private model.
+
+```yaml
+# In config.yaml model definitions:
+models:
+  llm:
+    local-model:
+      privacy: private       # data never leaves the machine
+      provider: ollama
+      # ...
+    cloud-model:
+      privacy: public        # data may leave
+      provider: clarifai
+      # ...
+```
+
+### Audit trail
+
+Every policy deny and audit event is recorded to `.agent/policy_audit.jsonl`:
+
+```json
+{"ts":"2026-03-17T10:30:00+00:00","domain":"network","action":"GET api.github.com:443/repos","decision":"deny","detail":"No matching policy entry"}
+```
+
+### Policy file reference
+
+See [sandbox_policy.example.yaml](sandbox_policy.example.yaml) for the full schema with detailed comments. 
+
+### Operator approval for policy violations
+
+When the policy engine blocks a network request or process execution, the denial is automatically surfaced as an approval request in the REPL and web UI.  Operators can approve or reject directly:
+
+```
+/approvals              # View pending policy violations
+/approve <id>           # Approve a blocked request
+/reject <id>            # Reject a blocked request
+/policy-allow host:port # Add a session-scoped network override
+```
+
+Approved endpoints are added as **session overrides** — they work for the current session but are NOT persisted to the baseline `sandbox_policy.yaml`.  This prevents policy drift while keeping the agent unblocked.
+
+### Runtime model switching
+
+Switch the active model without restarting DELIA:
+
+```
+/switch-model model_2   # Switch to model_2 immediately
+/models                 # List all models + active indicator
+```
+
+### Dynamic policy application
+
+Apply policy changes to a running session:
+
+```
+/policy                 # Show current policy status
+/policy-set overlay.yaml # Hot-reload network + inference sections
+/policy-allow api.new.com:443  # Add session network override
+/policy-clear           # Remove all session overrides
+```
+
+### Network activity monitor
+
+Live view of all outbound network requests:
+
+```
+/network                # Show activity summary + recent requests
+```
+
+### Environment profiles
+
+Named bundles of policy + model config + tool restrictions:
+
+```yaml
+# .agent/profiles/production.yaml
+name: production
+description: Locked-down production profile
+policy_file: sandbox_policy_prod.yaml
+enforcement_mode: enforce
+models:
+  enable: [model_1, model_2]
+  primary: model_1
+tools:
+  disable: [run_command]
+```
+
+```
+/profiles               # List available profiles
+```
 
 ## Design Principles
 
@@ -726,5 +1014,5 @@ See the [`DEPLOY/`](DEPLOY/) directory for deployment options:
 
 - **Python 3.10+**
 - **Dependencies:** `pyyaml>=6.0`, `rich>=13.0`, `playwright>=1.58`
-- **Optional:** Ollama (local models + embeddings), git (worktree spawning)
+- **Optional:** Ollama (local models + embeddings), git (worktree spawning), Node.js/npm (to rebuild `web-ui/out`), Playwright Chromium (`python -m playwright install chromium`)
 - Cross-platform: Windows, macOS, Linux
